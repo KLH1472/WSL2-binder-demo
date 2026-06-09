@@ -4,11 +4,11 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <cstdint>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/android/binder.h>
 #include <linux/android/binderfs.h>
+#include "binder_buf.h"
 
 #define DEV_NAME "triple"
 #define MMAP_SIZE (1024*1024)
@@ -18,9 +18,7 @@ enum { CMD_REGISTER = 1, CMD_GET_SERVICE = 2 };
 struct svc_entry {
     char name[64];
     uint32_t handle;
-};
-
-struct svc_entry g_services[8];
+} g_services[8];
 int g_nsvc = 0;
 
 uint32_t find_handle(const char *name) {
@@ -68,8 +66,7 @@ int main() {
                 if (tr->code == CMD_REGISTER) {
                     const uint8_t *d = (const uint8_t*)(uintptr_t)tr->data.ptr.buffer;
                     const binder_size_t *offs = (const binder_size_t*)(uintptr_t)tr->data.ptr.offsets;
-                    struct flat_binder_object *fbo =
-                        (struct flat_binder_object*)(d + *offs);
+                    struct flat_binder_object *fbo = (struct flat_binder_object*)(d + *offs);
 
                     strcpy(g_services[g_nsvc].name, (const char*)d);
                     g_services[g_nsvc].handle = fbo->handle;
@@ -96,24 +93,17 @@ int main() {
                     printf("[sm] query '%s' -> handle %u\n", name, h);
 
                     if (h) {
-                        uint8_t rbuf[256] = {0};
-                        int fbo_off = 8;
-                        struct flat_binder_object *rfbo = (struct flat_binder_object*)(rbuf + fbo_off);
-                        rfbo->hdr.type = BINDER_TYPE_HANDLE;
-                        rfbo->flags = 0;
-                        rfbo->handle = h;
-                        rfbo->cookie = 0;
-
-                        binder_size_t roffs[1] = { (binder_size_t)fbo_off };
+                        BinderBuf bb;
+                        bb.write_translated_handle(h);
 
                         struct __attribute__((packed)) { uint32_t cmd; struct binder_transaction_data txn; } rply;
                         rply.cmd = BC_REPLY;
                         memset(&rply.txn, 0, sizeof(rply.txn));
                         rply.txn.code = CMD_GET_SERVICE;
-                        rply.txn.data.ptr.buffer = (binder_uintptr_t)rbuf;
-                        rply.txn.data_size = fbo_off + sizeof(struct flat_binder_object);
-                        rply.txn.data.ptr.offsets = (binder_uintptr_t)roffs;
-                        rply.txn.offsets_size = sizeof(roffs);
+                        rply.txn.data.ptr.buffer = (binder_uintptr_t)bb.data;
+                        rply.txn.data_size = bb.cursor;
+                        rply.txn.data.ptr.offsets = (binder_uintptr_t)bb.offsets;
+                        rply.txn.offsets_size = bb.n_offsets * sizeof(binder_size_t);
 
                         struct binder_write_read b2; memset(&b2, 0, sizeof(b2));
                         b2.write_size = sizeof(rply);

@@ -4,10 +4,10 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <cstdint>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/android/binder.h>
+#include "binder_buf.h"
 
 enum { CMD_REGISTER = 1, CMD_UPPER = 100, CMD_LOWER = 101 };
 
@@ -22,34 +22,19 @@ int main() {
     ioctl(fd, BINDER_WRITE_READ, &bwr);
 
     // ---------- register with SM ----------
-    const char *sname = "UpperService";
-    int name_len = strlen(sname) + 1;
-    int fbo_off = (name_len + 7) & ~7;  // 8-byte aligned
-    int data_size = fbo_off + sizeof(struct flat_binder_object);
+    BinderBuf bb;
+    bb.write_string("UpperService");
+    bb.write_binder((binder_uintptr_t)map);
 
-    uint8_t reg_buf[512] = {0};
-    strcpy((char*)reg_buf, sname);
-
-    struct flat_binder_object *fbo = (struct flat_binder_object*)(reg_buf + fbo_off);
-    fbo->hdr.type = BINDER_TYPE_BINDER;
-    fbo->flags = 0;
-    fbo->binder = (binder_uintptr_t)map;
-    fbo->cookie = 0;
-
-    binder_size_t off[1] = { (binder_size_t)fbo_off };
-
-    struct __attribute__((packed)) {
-        uint32_t cmd;
-        struct binder_transaction_data txn;
-    } reg;
+    struct __attribute__((packed)) { uint32_t cmd; struct binder_transaction_data txn; } reg;
     reg.cmd = BC_TRANSACTION;
     memset(&reg.txn, 0, sizeof(reg.txn));
     reg.txn.target.handle = 0;
     reg.txn.code = CMD_REGISTER;
-    reg.txn.data.ptr.buffer = (binder_uintptr_t)reg_buf;
-    reg.txn.data_size = data_size;
-    reg.txn.data.ptr.offsets = (binder_uintptr_t)off;
-    reg.txn.offsets_size = sizeof(off);
+    reg.txn.data.ptr.buffer  = (binder_uintptr_t)bb.data;
+    reg.txn.data_size        = bb.cursor;
+    reg.txn.data.ptr.offsets = (binder_uintptr_t)bb.offsets;
+    reg.txn.offsets_size     = bb.n_offsets * sizeof(binder_size_t);
 
     uint8_t rbuf[4096];
     memset(&bwr, 0, sizeof(bwr));
@@ -58,7 +43,6 @@ int main() {
     bwr.read_size = sizeof(rbuf); bwr.read_buffer = (uintptr_t)rbuf;
     ioctl(fd, BINDER_WRITE_READ, &bwr);
 
-    // read SM's reply
     uint32_t my_handle = 0;
     uintptr_t p = (uintptr_t)rbuf, e = p + bwr.read_consumed;
     while (p < e) {

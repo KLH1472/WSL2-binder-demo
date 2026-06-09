@@ -4,10 +4,10 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <cstdint>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/android/binder.h>
+#include "binder_buf.h"
 
 enum { CMD_GET_SERVICE = 2, CMD_UPPER = 100, CMD_LOWER = 101 };
 
@@ -20,15 +20,17 @@ int main(int argc, char **argv) {
     if (fd < 0) { perror("open"); return 1; }
     void *map = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, fd, 0);
 
-    // ---------- step 1: query SM for service ----------
-    const char *sname = "UpperService";
+    // ---------- step 1: query SM ----------
+    BinderBuf qb;
+    qb.write_string("UpperService");
+
     struct __attribute__((packed)) { uint32_t cmd; struct binder_transaction_data txn; } q;
     q.cmd = BC_TRANSACTION;
     memset(&q.txn, 0, sizeof(q.txn));
     q.txn.target.handle = 0;
     q.txn.code = CMD_GET_SERVICE;
-    q.txn.data.ptr.buffer = (binder_uintptr_t)sname;
-    q.txn.data_size = strlen(sname) + 1;
+    q.txn.data.ptr.buffer = (binder_uintptr_t)qb.data;
+    q.txn.data_size = qb.cursor;
 
     uint8_t buf[4096];
     struct binder_write_read bwr; memset(&bwr,0,sizeof(bwr));
@@ -58,20 +60,19 @@ int main(int argc, char **argv) {
         }
     }
     if (!srv_handle) { printf("[client] service not found\n"); close(fd); return 1; }
-    printf("[client] found '%s' at handle %u\n", sname, srv_handle);
+    printf("[client] found 'UpperService' at handle %u\n", srv_handle);
 
     // ---------- step 2: direct call to server ----------
-    // op is in txn.code, data is just the string
-    uint8_t data[512];
-    strcpy((char*)data, input);
+    BinderBuf rb;
+    rb.write_string(input);
 
     struct __attribute__((packed)) { uint32_t cmd; struct binder_transaction_data txn; } req;
     req.cmd = BC_TRANSACTION;
     memset(&req.txn, 0, sizeof(req.txn));
     req.txn.target.handle = srv_handle;
     req.txn.code = op;
-    req.txn.data.ptr.buffer = (binder_uintptr_t)data;
-    req.txn.data_size = strlen(input) + 1;
+    req.txn.data.ptr.buffer = (binder_uintptr_t)rb.data;
+    req.txn.data_size = rb.cursor;
 
     memset(&bwr, 0, sizeof(bwr));
     bwr.write_size = sizeof(req); bwr.write_buffer = (uintptr_t)&req;
