@@ -32,50 +32,28 @@ int main(int argc, char **argv) {
     q.txn.data.ptr.buffer = (binder_uintptr_t)qb.data;
     q.txn.data_size = qb.cursor;
 
-    uint8_t buf[4096];
     struct binder_write_read bwr; memset(&bwr,0,sizeof(bwr));
     bwr.write_size = sizeof(q); bwr.write_buffer = (uintptr_t)&q;
-    bwr.read_size = sizeof(buf); bwr.read_buffer = (uintptr_t)buf;
     ioctl(fd, BINDER_WRITE_READ, &bwr);
 
     uint32_t srv_handle = 0;
 
-    // process first read buffer
-    {
-        uintptr_t p = (uintptr_t)buf, e = p + bwr.read_consumed;
-        while (p < e) {
-            uint32_t c = *(uint32_t*)p; p += 4;
-            if (c == BR_REPLY) {
-                struct binder_transaction_data *t = (struct binder_transaction_data*)p;
-                p += sizeof(*t);
-                if (t->code == CMD_GET_SERVICE && t->data_size > 0 && t->offsets_size > 0) {
-                    const uint8_t *data = (const uint8_t*)(uintptr_t)t->data.ptr.buffer;
-                    const binder_size_t *offs = (const binder_size_t*)(uintptr_t)t->data.ptr.offsets;
-                    struct flat_binder_object *fbo = (struct flat_binder_object*)(data + *offs);
-                    srv_handle = fbo->handle;
-                }
-            }
-        }
-    }
+    uint8_t buf[4096];
+    memset(&bwr, 0, sizeof(bwr));
+    bwr.read_size = sizeof(buf); bwr.read_buffer = (uintptr_t)buf;
+    ioctl(fd, BINDER_WRITE_READ, &bwr);
 
-    // maybe BR_REPLY hasn't arrived yet — one more read
-    if (!srv_handle) {
-        memset(&bwr, 0, sizeof(bwr));
-        bwr.read_size = sizeof(buf); bwr.read_buffer = (uintptr_t)buf;
-        ioctl(fd, BINDER_WRITE_READ, &bwr);
-
-        uintptr_t p = (uintptr_t)buf, e = p + bwr.read_consumed;
-        while (p < e) {
-            uint32_t c = *(uint32_t*)p; p += 4;
-            if (c == BR_REPLY) {
-                struct binder_transaction_data *t = (struct binder_transaction_data*)p;
-                p += sizeof(*t);
-                if (t->code == CMD_GET_SERVICE && t->data_size > 0 && t->offsets_size > 0) {
-                    const uint8_t *data = (const uint8_t*)(uintptr_t)t->data.ptr.buffer;
-                    const binder_size_t *offs = (const binder_size_t*)(uintptr_t)t->data.ptr.offsets;
-                    struct flat_binder_object *fbo = (struct flat_binder_object*)(data + *offs);
-                    srv_handle = fbo->handle;
-                }
+    uintptr_t p = (uintptr_t)buf, e = p + bwr.read_consumed;
+    while (p < e) {
+        uint32_t c = *(uint32_t*)p; p += 4;
+        if (c == BR_REPLY) {
+            struct binder_transaction_data *t = (struct binder_transaction_data*)p;
+            p += sizeof(*t);
+            if (t->code == CMD_GET_SERVICE && t->data_size > 0 && t->offsets_size > 0) {
+                const uint8_t *data = (const uint8_t*)(uintptr_t)t->data.ptr.buffer;
+                const binder_size_t *offs = (const binder_size_t*)(uintptr_t)t->data.ptr.offsets;
+                struct flat_binder_object *fbo = (struct flat_binder_object*)(data + *offs);
+                srv_handle = fbo->handle;
             }
         }
     }
