@@ -39,26 +39,47 @@ int main(int argc, char **argv) {
     ioctl(fd, BINDER_WRITE_READ, &bwr);
 
     uint32_t srv_handle = 0;
-    for (int attempt = 0; attempt < 2 && !srv_handle; attempt++) {
+
+    // process first read buffer
+    {
         uintptr_t p = (uintptr_t)buf, e = p + bwr.read_consumed;
         while (p < e) {
             uint32_t c = *(uint32_t*)p; p += 4;
             if (c == BR_REPLY) {
                 struct binder_transaction_data *t = (struct binder_transaction_data*)p;
                 p += sizeof(*t);
-                if (t->code != CMD_GET_SERVICE) break;
-                const uint8_t *data = (const uint8_t*)(uintptr_t)t->data.ptr.buffer;
-                const binder_size_t *offs = (const binder_size_t*)(uintptr_t)t->data.ptr.offsets;
-                struct flat_binder_object *fbo = (struct flat_binder_object*)(data + *offs);
-                srv_handle = fbo->handle;
+                if (t->code == CMD_GET_SERVICE && t->data_size > 0 && t->offsets_size > 0) {
+                    const uint8_t *data = (const uint8_t*)(uintptr_t)t->data.ptr.buffer;
+                    const binder_size_t *offs = (const binder_size_t*)(uintptr_t)t->data.ptr.offsets;
+                    struct flat_binder_object *fbo = (struct flat_binder_object*)(data + *offs);
+                    srv_handle = fbo->handle;
+                }
             }
         }
-        if (!srv_handle) {
-            memset(&bwr, 0, sizeof(bwr));
-            bwr.read_size = sizeof(buf); bwr.read_buffer = (uintptr_t)buf;
-            ioctl(fd, BINDER_WRITE_READ, &bwr);
+    }
+
+    // maybe BR_REPLY hasn't arrived yet — one more read
+    if (!srv_handle) {
+        memset(&bwr, 0, sizeof(bwr));
+        bwr.read_size = sizeof(buf); bwr.read_buffer = (uintptr_t)buf;
+        ioctl(fd, BINDER_WRITE_READ, &bwr);
+
+        uintptr_t p = (uintptr_t)buf, e = p + bwr.read_consumed;
+        while (p < e) {
+            uint32_t c = *(uint32_t*)p; p += 4;
+            if (c == BR_REPLY) {
+                struct binder_transaction_data *t = (struct binder_transaction_data*)p;
+                p += sizeof(*t);
+                if (t->code == CMD_GET_SERVICE && t->data_size > 0 && t->offsets_size > 0) {
+                    const uint8_t *data = (const uint8_t*)(uintptr_t)t->data.ptr.buffer;
+                    const binder_size_t *offs = (const binder_size_t*)(uintptr_t)t->data.ptr.offsets;
+                    struct flat_binder_object *fbo = (struct flat_binder_object*)(data + *offs);
+                    srv_handle = fbo->handle;
+                }
+            }
         }
     }
+
     if (!srv_handle) { printf("[client] service not found\n"); close(fd); return 1; }
     printf("[client] found 'UpperService' at handle %u\n", srv_handle);
 
@@ -80,7 +101,30 @@ int main(int argc, char **argv) {
     ioctl(fd, BINDER_WRITE_READ, &bwr);
 
     char result[256] = "";
-    for (int attempt = 0; attempt < 2 && !*result; attempt++) {
+    bool have_result = false;
+
+    // process first read buffer
+    {
+        uintptr_t p = (uintptr_t)buf, e = p + bwr.read_consumed;
+        while (p < e) {
+            uint32_t c = *(uint32_t*)p; p += 4;
+            if (c == BR_REPLY) {
+                struct binder_transaction_data *t = (struct binder_transaction_data*)p;
+                p += sizeof(*t);
+                strcpy(result, (const char*)(uintptr_t)t->data.ptr.buffer);
+                have_result = true;
+            } else if (c == BR_DEAD_REPLY || c == BR_FAILED_REPLY) {
+                have_result = true;
+            }
+        }
+    }
+
+    // wait for actual reply if only ack was received
+    if (!have_result) {
+        memset(&bwr, 0, sizeof(bwr));
+        bwr.read_size = sizeof(buf); bwr.read_buffer = (uintptr_t)buf;
+        ioctl(fd, BINDER_WRITE_READ, &bwr);
+
         uintptr_t p = (uintptr_t)buf, e = p + bwr.read_consumed;
         while (p < e) {
             uint32_t c = *(uint32_t*)p; p += 4;
@@ -90,12 +134,8 @@ int main(int argc, char **argv) {
                 strcpy(result, (const char*)(uintptr_t)t->data.ptr.buffer);
             }
         }
-        if (!*result) {
-            memset(&bwr, 0, sizeof(bwr));
-            bwr.read_size = sizeof(buf); bwr.read_buffer = (uintptr_t)buf;
-            ioctl(fd, BINDER_WRITE_READ, &bwr);
-        }
     }
+
     printf("[client] result: '%s'\n", result);
 
     close(fd); return 0;

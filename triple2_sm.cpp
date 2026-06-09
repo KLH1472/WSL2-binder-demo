@@ -10,7 +10,6 @@
 #include <linux/android/binderfs.h>
 #include "binder_buf.h"
 
-#define DEV_NAME "triple"
 #define MMAP_SIZE (1024*1024)
 
 enum { CMD_REGISTER = 1, CMD_GET_SERVICE = 2 };
@@ -27,16 +26,19 @@ uint32_t find_handle(const char *name) {
             return g_services[i].handle;
     return 0;
 }
-
 int main() {
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     int ctl = open("/dev/binderfs/binder-control", O_RDWR|O_CLOEXEC);
     struct binderfs_device dev = {0};
-    strcpy(dev.name, DEV_NAME);
-    ioctl(ctl, BINDER_CTL_ADD, &dev);
+    const char dev_name[] = "triple";
+    strncpy(dev.name, dev_name, BINDERFS_MAX_NAME - 1);
+    if (ioctl(ctl, BINDER_CTL_ADD, &dev) < 0) {
+        if (errno != EEXIST) { perror("BINDER_CTL_ADD"); close(ctl); return 1; }
+    }
     close(ctl);
 
-    char path[64]; snprintf(path, sizeof(path), "/dev/binderfs/%s", DEV_NAME);
-    int fd = open(path, O_RDWR|O_CLOEXEC);
+    int fd = open("/dev/binderfs/triple", O_RDWR|O_CLOEXEC);
     if (fd < 0) { perror("open"); return 1; }
 
     void *map = mmap(NULL, MMAP_SIZE, PROT_READ, MAP_PRIVATE, fd, 0);

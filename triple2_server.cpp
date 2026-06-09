@@ -10,8 +10,9 @@
 #include "binder_buf.h"
 
 enum { CMD_REGISTER = 1, CMD_UPPER = 100, CMD_LOWER = 101 };
-
 int main() {
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     int fd = open("/dev/binderfs/triple", O_RDWR|O_CLOEXEC);
     if (fd < 0) { perror("open"); return 1; }
     void *map = mmap(NULL, 1024*1024, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -74,12 +75,19 @@ int main() {
                 if (len > 255) len = 255;
                 memcpy(result, input, len);
 
-                if (tr->code == CMD_UPPER)
-                    for (int i = 0; result[i]; i++) if (result[i]>='a'&&result[i]<='z') result[i]-=32;
-                else if (tr->code == CMD_LOWER)
-                    for (int i = 0; result[i]; i++) if (result[i]>='A'&&result[i]<='Z') result[i]+=32;
+                if (tr->code == CMD_UPPER) {
+                    for (int i = 0; result[i]; i++) {
+                        if (result[i]>='a'&&result[i]<='z') result[i]-=32;
+                    }
+                } else if (tr->code == CMD_LOWER) {
+                    for (int i = 0; result[i]; i++) {
+                        if (result[i]>='A'&&result[i]<='Z') result[i]+=32;
+                    }
+                }
 
-                printf("[server] %s '%s' -> '%s'\n", tr->code==CMD_UPPER?"upper":"lower", input, result);
+                const char *opname = tr->code == CMD_UPPER ? "upper" :
+                                     tr->code == CMD_LOWER ? "lower" : "unknown";
+                printf("[server] %s '%s' -> '%s'\n", opname, input, result);
 
                 struct __attribute__((packed)) { uint32_t cmd; struct binder_transaction_data txn; } rpl;
                 rpl.cmd = BC_REPLY;
